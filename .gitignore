@@ -1,0 +1,13 @@
+.env*
+!.env.example
+pkg
+bin
+.idea
+.DS_Store
+.milvus
+storage/
+.storage/
+.user
+logs
+.tdlib
+*.prof
