@@ -22,12 +22,12 @@ import (
 
 const llmPrompt = `
 Analyze the following user input. It's a user request to remind about something in specific time. Your goal is define:
-• requested reminder's date and time ("datetime" field). if the user didn't provide date then use today date. the user allowed to provide relative date or time, for example "today", "tomorrow", "in 10 minutes", "after 1 hour", etc. – in this case calculate datetime based on current datetime: %s. 
+• requested reminder's date and time ("datetime" field, format "2006-01-02 15:04:05"). if the user didn't provide date then use today date. the user allowed to provide relative date or time, for example "today", "tomorrow", "in 10 minutes", "after 1 hour", etc. – in this case calculate datetime based on current datetime: %s. 
 • label for reminder ("label" field)
-• generate answer to user in Russian language contained parsed datetime and label. for example: "Принято. <human-readable representation of datetime in MSK (UTC+3) timezone> напомню тебе о <human-readable label>".
+• generate an answer to the user about accepted reminder. language of answer is russian. For example: "Принято. 26 мая в 16:20 напомню тебе, что надо решить задачу".
 Output Requirements:
 •  Output must be in valid JSON with UTF-8 encoded strings.
-•  The JSON structure should be: {"datetime": "", "label": "", "answer": ""}
+•  The JSON structure must be: {"datetime": "2006-01-02 15:04:05", "label": "string", "answer": "string"}
 •  If you cannot generate any field, leave it empty in the JSON.
 •  Escape double quotes " by prefixing them with a backslash \.
 •  Do not escape other characters.
@@ -60,7 +60,7 @@ func main() {
 	}
 	defer db.Close()
 
-	db.SetMaxOpenConns(1)
+	//db.SetMaxOpenConns(8)
 
 	// Create reminders table if it doesn't exist
 	createTableSQL := `
@@ -114,14 +114,22 @@ func main() {
 
 // handleMessage processes text messages as before.
 func handleMessage(msg *tgbotapi.Message) {
+
+	log.Println("handle text message")
+
 	// Call the LLM to parse the message.
 	reminderTime, label, answer, err := parseMessageWithLLM(msg.Text)
 	if err != nil {
 		log.Printf("LLM parse error: %v", err)
 		reply := tgbotapi.NewMessage(msg.Chat.ID, "Ошибка распознования запроса. Попробуй сформулировать по-другому.")
-		bot.Send(reply)
+		_, err = bot.Send(reply)
+		if err != nil {
+			log.Printf("error sending answer: %v", err)
+		}
 		return
 	}
+
+	log.Println("handle text message 2")
 
 	// Insert the reminder into the database.
 	_, err = db.Exec("INSERT INTO reminders (chat_id, user_id, reminder_time, label) VALUES (?, ?, ?, ?)",
@@ -129,21 +137,32 @@ func handleMessage(msg *tgbotapi.Message) {
 	if err != nil {
 		log.Printf("DB insert error: %v", err)
 		reply := tgbotapi.NewMessage(msg.Chat.ID, "Error storing reminder")
-		bot.Send(reply)
+		_, err = bot.Send(reply)
+		if err != nil {
+			log.Printf("error sending answer: %v", err)
+		}
 		return
 	}
+
+	log.Println("handle text message 3")
 
 	// Log the accepted reminder.
 	log.Printf("Accepted reminder: '%s' at %s for chat ID %d", label, reminderTime.Format("2006-01-02 15:04:05"), msg.Chat.ID)
 
 	// Acknowledge the reminder creation using the answer provided by the LLM.
 	reply := tgbotapi.NewMessage(msg.Chat.ID, answer)
-	bot.Send(reply)
+	_, err = bot.Send(reply)
+	if err != nil {
+		log.Printf("error sending answer: %v", err)
+	}
 }
 
 // handleAudioMessage processes an audio/voice message, transcribes it with OpenAI Whisper,
 // then passes the transcription to the existing parsing logic.
 func handleAudioMessage(msg *tgbotapi.Message) {
+
+	log.Println("handle audio message")
+
 	fileID := msg.Voice.FileID
 	// Get file information from Telegram.
 	fileConfig := tgbotapi.FileConfig{FileID: fileID}
@@ -151,9 +170,14 @@ func handleAudioMessage(msg *tgbotapi.Message) {
 	if err != nil {
 		log.Printf("Error getting file info: %v", err)
 		reply := tgbotapi.NewMessage(msg.Chat.ID, "Не удалось получить аудио файл.")
-		bot.Send(reply)
+		_, err = bot.Send(reply)
+		if err != nil {
+			log.Printf("error sending answer: %v", err)
+		}
 		return
 	}
+
+	log.Println("handle audio message 2")
 
 	// Download the file using the provided file path.
 	fileURL := file.Link(bot.Token)
@@ -161,54 +185,94 @@ func handleAudioMessage(msg *tgbotapi.Message) {
 	if err != nil {
 		log.Printf("Error downloading file: %v", err)
 		reply := tgbotapi.NewMessage(msg.Chat.ID, "Не удалось загрузить аудио файл.")
-		bot.Send(reply)
+		_, err = bot.Send(reply)
+		if err != nil {
+			log.Printf("error sending answer: %v", err)
+		}
 		return
 	}
 	defer resp.Body.Close()
+
+	log.Println("handle audio message 3")
 
 	// Save the audio file locally (temporary).
 	tempFile, err := ioutil.TempFile("", "audio-*.ogg")
 	if err != nil {
 		log.Printf("Error creating temp file: %v", err)
 		reply := tgbotapi.NewMessage(msg.Chat.ID, "Ошибка обработки аудио файла.")
-		bot.Send(reply)
+		_, err = bot.Send(reply)
+		if err != nil {
+			log.Printf("error sending answer: %v", err)
+		}
 		return
 	}
-	defer os.Remove(tempFile.Name())
+	defer func(name string) {
+		err := os.Remove(name)
+		if err != nil {
+			log.Printf("Error removing temp file: %v", err)
+		}
+	}(tempFile.Name())
+
+	log.Println("handle audio message 4")
+
 	_, err = io.Copy(tempFile, resp.Body)
 	if err != nil {
 		log.Printf("Error saving audio file: %v", err)
 		reply := tgbotapi.NewMessage(msg.Chat.ID, "Ошибка сохранения аудио файла.")
-		bot.Send(reply)
+		_, err = bot.Send(reply)
+		if err != nil {
+			log.Printf("error sending answer: %v", err)
+		}
 		return
 	}
-	tempFile.Close()
+	err = tempFile.Close()
+	if err != nil {
+		log.Printf("Error closing temp file: %v", err)
+	}
+
+	log.Println("handle audio message 5")
 
 	// Call OpenAI Whisper API to transcribe the audio.
 	transcription, err := transcribeAudio(tempFile.Name())
 	if err != nil {
 		log.Printf("Error transcribing audio: %v", err)
 		reply := tgbotapi.NewMessage(msg.Chat.ID, "Ошибка распознавания аудио.")
-		bot.Send(reply)
+		_, err = bot.Send(reply)
+		if err != nil {
+			log.Printf("error sending answer: %v", err)
+		}
 		return
 	}
+
+	log.Println("handle audio message 6")
 
 	// Use the transcription as the user input.
 	reminderTime, label, answer, err := parseMessageWithLLM(transcription)
 	if err != nil {
 		log.Printf("LLM parse error after transcription: %v", err)
 		reply := tgbotapi.NewMessage(msg.Chat.ID, "Ошибка распознования запроса из аудио. Попробуй сформулировать по-другому.")
-		bot.Send(reply)
+		_, err = bot.Send(reply)
+		if err != nil {
+			log.Printf("error sending answer: %v", err)
+		}
 		return
 	}
 
+	log.Println("handle audio message 7")
+
 	// Insert the reminder into the database.
-	_, err = db.Exec("INSERT INTO reminders (chat_id, user_id, reminder_time, label) VALUES (?, ?, ?, ?)",
+	res, err := db.Exec("INSERT INTO reminders (chat_id, user_id, reminder_time, label) VALUES (?, ?, ?, ?)",
 		msg.Chat.ID, msg.From.ID, reminderTime, label)
+
+	log.Println("handle audio message 8", res, err)
+
 	if err != nil {
 		log.Printf("DB insert error: %v", err)
 		reply := tgbotapi.NewMessage(msg.Chat.ID, "Error storing reminder")
-		bot.Send(reply)
+		_, err = bot.Send(reply)
+		if err != nil {
+			log.Printf("error sending answer: %v", err)
+		}
 		return
 	}
 
@@ -217,7 +281,10 @@ func handleAudioMessage(msg *tgbotapi.Message) {
 
 	// Acknowledge the reminder creation using the answer provided by the LLM.
 	reply := tgbotapi.NewMessage(msg.Chat.ID, answer)
-	bot.Send(reply)
+	_, err = bot.Send(reply)
+	if err != nil {
+		log.Printf("error sending answer: %v", err)
+	}
 }
 
 // transcribeAudio sends the audio file to OpenAI's Whisper API and returns the transcription.
@@ -377,7 +444,10 @@ func parseMessageWithLLM(input string) (time.Time, string, string, error) {
 // checkReminders periodically checks the database for reminders
 // that are due and sends them to the user.
 func checkReminders() {
-	ticker := time.NewTicker(10 * time.Second)
+
+	log.Println("Checking reminders...")
+
+	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	for range ticker.C {
@@ -392,11 +462,13 @@ func checkReminders() {
 			var id int64
 			var chatID int64
 			var label string
-			err := rows.Scan(&id, &chatID, &label)
+			err = rows.Scan(&id, &chatID, &label)
 			if err != nil {
 				log.Printf("Row scan error: %v", err)
 				continue
 			}
+
+			log.Printf("handled reminder id=%v, chatId=%v, label=%s", id, chatID, label)
 
 			// Send the reminder message to the user.
 			msg := tgbotapi.NewMessage(chatID, label)
@@ -409,11 +481,17 @@ func checkReminders() {
 			}
 
 			// Mark the reminder as notified to avoid sending it again.
-			_, err = db.Exec("UPDATE reminders SET notified = 1 WHERE id = ?", id)
+			result, err := db.Exec("UPDATE reminders SET notified = 1 WHERE id = ?", id)
 			if err != nil {
 				log.Printf("Error updating reminder status: %v", err)
+			} else {
+				rowsAffected, err := result.RowsAffected()
+				log.Printf("Updated reminder: [%v] %s, rows affected=%v (%s)", id, label, rowsAffected, err)
 			}
 		}
-		rows.Close()
+		err = rows.Close()
+		if err != nil {
+			log.Printf("checkReminders Error closing rows: %v", err)
+		}
 	}
 }
