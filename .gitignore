@@ -12,3 +12,4 @@ logs
 .tdlib
 *.prof
 *.db
+*.db-*
