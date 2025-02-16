@@ -205,7 +205,6 @@ func (b *Bot) handleCommand(msg *tgbotapi.Message) {
 			"• /start – Приветствие\n" +
 			"• /list – Список будущих напоминаний"
 		reply := tgbotapi.NewMessage(msg.Chat.ID, welcome)
-		// Using HTML parse mode for consistent formatting.
 		reply.ParseMode = "HTML"
 		b.bot.Send(reply)
 	case "list":
@@ -229,8 +228,8 @@ func (b *Bot) handleCommand(msg *tgbotapi.Message) {
 				b.logger.Printf("Row scan error in /list: %v", err)
 				continue
 			}
-			// Format date as dd.mm.yyyy
-			reminders = append(reminders, fmt.Sprintf("%s - %s", rTime.Format("02.01.2006"), label))
+			// Format date and time as dd.mm.yyyy hh:mm
+			reminders = append(reminders, fmt.Sprintf("%s - %s", rTime.Format("02.01.2006 15:04"), label))
 		}
 		rows.Close()
 		b.dbLock.Unlock()
