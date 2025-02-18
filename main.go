@@ -23,8 +23,7 @@ import (
 
 // Обновлённый llmPrompt с учётом более умеренного стиля, упоминанием текущего времени,
 // указаниями о форматах дат/времени, поведения при запросах на период/конкретную дату,
-// а также поддержкой нескольких операций в одном запросе.
-// Не используй символы трёх обратных кавычек внутри этого промпта.
+// поддержки нескольких операций в одном запросе, и информации о том, что сообщение было отредактировано.
 const llmPrompt = `
 Текущее время: %s
 
@@ -95,13 +94,13 @@ type LLMOutputMulti struct {
 	UserReminders []map[string]string `json:"user_reminders"`
 }
 
-// FunctionCall – описание вызова функции (для function_call).
+// FunctionCall описывает вызов функции (для function_call).
 type FunctionCall struct {
 	Name      string `json:"name"`
 	Arguments string `json:"arguments"`
 }
 
-// ChatMessage, ChatChoice, OpenAIChatResponse – типы для парсинга ответа OpenAI.
+// ChatMessage, ChatChoice и OpenAIChatResponse используются для парсинга ответа OpenAI.
 type ChatMessage struct {
 	Role         string        `json:"role"`
 	Content      string        `json:"content"`
@@ -116,7 +115,7 @@ type OpenAIChatResponse struct {
 	Choices []ChatChoice `json:"choices"`
 }
 
-// Bot инкапсулирует Telegram-бота, базу данных, логгер и мьютекс.
+// Bot инкапсулирует Telegram-бота, базу данных, логгер и мьютекс для синхронизации доступа к БД.
 type Bot struct {
 	db     *sql.DB
 	bot    *tgbotapi.BotAPI
@@ -133,7 +132,8 @@ func NewBot(db *sql.DB, bot *tgbotapi.BotAPI, logger *log.Logger) *Bot {
 	}
 }
 
-// initDB – инициализация базы данных.
+// initDB открывает базу SQLite, устанавливает режим WAL, ограничивает число соединений,
+// и создаёт таблицу напоминаний, если она отсутствует.
 func initDB(path string, logger *log.Logger) (*sql.DB, error) {
 	connStr := fmt.Sprintf("file:%s?_busy_timeout=5000&_journal_mode=WAL", path)
 	db, err := sql.Open("sqlite3", connStr)
@@ -157,7 +157,7 @@ func initDB(path string, logger *log.Logger) (*sql.DB, error) {
 	return db, nil
 }
 
-// getUserReminders – получение всех активных напоминаний пользователя.
+// getUserReminders получает все активные напоминания пользователя.
 func (b *Bot) getUserReminders(userID int64) ([]map[string]string, error) {
 	b.dbLock.Lock()
 	defer b.dbLock.Unlock()
@@ -184,7 +184,7 @@ func (b *Bot) getUserReminders(userID int64) ([]map[string]string, error) {
 	return reminders, nil
 }
 
-// getUserRemindersByPeriod – получение напоминаний в заданном периоде.
+// getUserRemindersByPeriod получает напоминания пользователя за заданный период.
 func (b *Bot) getUserRemindersByPeriod(userID int64, start, end time.Time) ([]map[string]string, error) {
 	b.dbLock.Lock()
 	defer b.dbLock.Unlock()
@@ -218,7 +218,7 @@ func (b *Bot) getUserRemindersByPeriod(userID int64, start, end time.Time) ([]ma
 	return reminders, nil
 }
 
-// parseMessageWithLLM – формирует промпт, отправляет запрос в OpenAI и возвращает LLMOutputMulti.
+// parseMessageWithLLM формирует промпт, отправляет запрос в OpenAI и возвращает LLMOutputMulti.
 func (b *Bot) parseMessageWithLLM(input string, userID int64) (LLMOutputMulti, error) {
 	var result LLMOutputMulti
 	userReminders, err := b.getUserReminders(userID)
@@ -280,7 +280,7 @@ func (b *Bot) parseMessageWithLLM(input string, userID int64) (LLMOutputMulti, e
 	}
 	openaiAPIKey := os.Getenv("OPENAI_API_KEY")
 	if openaiAPIKey == "" {
-		return result, fmt.Errorf("OPENAI_API_KEY is not set in environment")
+		return result, fmt.Errorf("OPENAI_API_KEY не задан в переменных окружения")
 	}
 	req, err := http.NewRequest("POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(reqBody))
 	if err != nil {
@@ -310,18 +310,12 @@ func (b *Bot) parseMessageWithLLM(input string, userID int64) (LLMOutputMulti, e
 		fc := choice.FunctionCall
 		switch fc.Name {
 		case "adjust_reminder":
-			// Если функция, то предполагаем, что все операции заданы в массиве.
-			// Устанавливаем действие каждого элемента в "adjust"
-			// (Модель должна вернуть массив операций)
+			// Ожидается, что модель вернёт массив операций для изменения.
 		case "delete_reminder":
-			// Аналогично для delete.
+			// Аналогично для удаления.
 		}
 		if err := json.Unmarshal([]byte(fc.Arguments), &result); err != nil {
 			return result, fmt.Errorf("error parsing function call arguments: %v", err)
-		}
-		if len(result.Operations) == 0 {
-			// Если операции пусты, устанавливаем дефолтное сообщение для каждого типа.
-			// (Эта ветка может быть не нужна, если модель всегда возвращает массив)
 		}
 	} else {
 		outputText := strings.TrimSpace(choice.Content)
@@ -336,7 +330,6 @@ func (b *Bot) parseMessageWithLLM(input string, userID int64) (LLMOutputMulti, e
 			return result, fmt.Errorf("error parsing JSON: %v", err)
 		}
 	}
-	// Простая проверка: для операций create необходимо, чтобы label и datetime были заданы.
 	for _, op := range result.Operations {
 		if op.Action == "create" {
 			if strings.TrimSpace(op.Label) == "" || strings.TrimSpace(op.Datetime) == "" {
@@ -358,7 +351,7 @@ func (b *Bot) processOperations(ops []Operation, msg *tgbotapi.Message) {
 		case "create":
 			reminderTime, err := time.Parse("2006-01-02 15:04:05", op.Datetime)
 			if err != nil {
-				reply := tgbotapi.NewMessage(msg.Chat.ID, "Формат даты/времени неверный в операции создания.")
+				reply := tgbotapi.NewMessage(msg.Chat.ID, "Неверный формат даты/времени в операции создания.")
 				b.bot.Send(reply)
 				continue
 			}
@@ -382,7 +375,7 @@ func (b *Bot) processOperations(ops []Operation, msg *tgbotapi.Message) {
 			if hasDate && hasLabel {
 				reminderTime, err := time.Parse("2006-01-02 15:04:05", op.Datetime)
 				if err != nil {
-					reply := tgbotapi.NewMessage(msg.Chat.ID, "Формат даты/времени неверный в операции изменения.")
+					reply := tgbotapi.NewMessage(msg.Chat.ID, "Неверный формат даты/времени в операции изменения.")
 					b.bot.Send(reply)
 					continue
 				}
@@ -391,7 +384,7 @@ func (b *Bot) processOperations(ops []Operation, msg *tgbotapi.Message) {
 			} else if hasDate {
 				reminderTime, err := time.Parse("2006-01-02 15:04:05", op.Datetime)
 				if err != nil {
-					reply := tgbotapi.NewMessage(msg.Chat.ID, "Формат даты/времени неверный в операции изменения.")
+					reply := tgbotapi.NewMessage(msg.Chat.ID, "Неверный формат даты/времени в операции изменения.")
 					b.bot.Send(reply)
 					continue
 				}
@@ -534,7 +527,7 @@ func (b *Bot) processOperations(ops []Operation, msg *tgbotapi.Message) {
 	}
 }
 
-// handleMessage – обработка текстовых сообщений.
+// handleMessage обрабатывает обычные текстовые сообщения.
 func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	b.logger.Println("Получено текстовое сообщение.")
 	multi, err := b.parseMessageWithLLM(msg.Text, msg.From.ID)
@@ -547,7 +540,22 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	b.processOperations(multi.Operations, msg)
 }
 
-// handleAudioMessage – обработка голосовых сообщений.
+// handleEditedMessage обрабатывает отредактированные сообщения.
+func (b *Bot) handleEditedMessage(msg *tgbotapi.Message) {
+	b.logger.Println("Получено отредактированное сообщение.")
+	// Добавляем префикс, чтобы LLM понял, что это изменённое напоминание.
+	editedText := "Отредактировано: " + msg.Text
+	multi, err := b.parseMessageWithLLM(editedText, msg.From.ID)
+	if err != nil {
+		b.logger.Printf("LLM parse error (edited): %v", err)
+		reply := tgbotapi.NewMessage(msg.Chat.ID, "Не смог разобрать отредактированный запрос. Попробуйте ещё раз.")
+		b.bot.Send(reply)
+		return
+	}
+	b.processOperations(multi.Operations, msg)
+}
+
+// handleAudioMessage обрабатывает голосовые сообщения.
 func (b *Bot) handleAudioMessage(msg *tgbotapi.Message) {
 	b.logger.Println("Получено голосовое сообщение.")
 	fileID := msg.Voice.FileID
@@ -602,7 +610,7 @@ func (b *Bot) handleAudioMessage(msg *tgbotapi.Message) {
 	b.processOperations(multi.Operations, msg)
 }
 
-// handleVideoMessage – обработка видео сообщений: извлечение аудио через ffmpeg.
+// handleVideoMessage обрабатывает видео сообщения: извлекает аудио через ffmpeg.
 func (b *Bot) handleVideoMessage(msg *tgbotapi.Message) {
 	b.logger.Println("Получено видео сообщение.")
 	fileID := msg.Video.FileID
@@ -675,7 +683,7 @@ func (b *Bot) handleVideoMessage(msg *tgbotapi.Message) {
 	b.processOperations(multi.Operations, msg)
 }
 
-// transcribeAudio – отправляет аудиофайл в Whisper API и возвращает распознанный текст.
+// transcribeAudio отправляет аудиофайл в Whisper API и возвращает распознанный текст.
 func (b *Bot) transcribeAudio(filePath string) (string, error) {
 	openaiAPIKey := os.Getenv("OPENAI_API_KEY")
 	if openaiAPIKey == "" {
@@ -722,7 +730,7 @@ func (b *Bot) transcribeAudio(filePath string) (string, error) {
 	return whisperResp.Text, nil
 }
 
-// checkReminders – периодическая проверка просроченных напоминаний и их отправка.
+// checkReminders периодически проверяет просроченные напоминания и отправляет их.
 func (b *Bot) checkReminders() {
 	b.logger.Println("Запущена проверка напоминаний...")
 	ticker := time.NewTicker(10 * time.Second)
@@ -769,7 +777,7 @@ func (b *Bot) checkReminders() {
 	}
 }
 
-// weekdayToRussian – утилита для вывода дня недели по-русски.
+// weekdayToRussian возвращает название дня недели на русском.
 func weekdayToRussian(w time.Weekday) string {
 	switch w {
 	case time.Monday:
@@ -816,29 +824,30 @@ func main() {
 	u.Timeout = 60
 	updates := tgBot.GetUpdatesChan(u)
 	for update := range updates {
-		if update.Message == nil {
-			continue
-		}
-		if update.Message.IsCommand() {
-			go myBot.handleCommand(update.Message)
-		} else if update.Message.Voice != nil {
-			go myBot.handleAudioMessage(update.Message)
-		} else if update.Message.Video != nil {
-			go myBot.handleVideoMessage(update.Message)
-		} else {
-			go myBot.handleMessage(update.Message)
+		if update.Message != nil {
+			if update.Message.IsCommand() {
+				go myBot.handleCommand(update.Message)
+			} else if update.Message.Voice != nil {
+				go myBot.handleAudioMessage(update.Message)
+			} else if update.Message.Video != nil {
+				go myBot.handleVideoMessage(update.Message)
+			} else {
+				go myBot.handleMessage(update.Message)
+			}
+		} else if update.EditedMessage != nil {
+			go myBot.handleEditedMessage(update.EditedMessage)
 		}
 	}
 }
 
-// handleCommand – обработка команд ("/start", "/list" и т.д.).
+// handleCommand обрабатывает команды ("/start", "/list" и т.д.).
 func (b *Bot) handleCommand(msg *tgbotapi.Message) {
 	switch msg.Command() {
 	case "start":
-		welcome := "Привет! Я бот-напоминалка. Напиши, что и когда тебе напомнить, и я сохраню напоминание.\n\n" +
-			"Доступные команды:\n" +
-			"• /start – Приветственное сообщение\n" +
-			"• /list – Показать список будущих напоминаний"
+		welcome := `Привет! Я бот-напоминалка. Напиши, что и когда тебе напомнить, и я сохраню напоминание.
+Доступные команды:
+• /start – Приветственное сообщение
+• /list – Показать список будущих напоминаний`
 		reply := tgbotapi.NewMessage(msg.Chat.ID, welcome)
 		reply.ParseMode = "HTML"
 		b.bot.Send(reply)
