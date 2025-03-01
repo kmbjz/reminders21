@@ -50,13 +50,17 @@ type OpenAIChatResponse struct {
 
 // Operation represents a reminder operation
 type Operation struct {
-	Action     string `json:"action"`
-	Datetime   string `json:"datetime"`
-	Label      string `json:"label"`
-	ReminderID string `json:"reminder_id"`
-	Answer     string `json:"answer"`
-	StartDate  string `json:"start_date"`
-	EndDate    string `json:"end_date"`
+	Action        string `json:"action"`
+	Datetime      string `json:"datetime"`
+	Label         string `json:"label"`
+	ReminderID    string `json:"reminder_id"`
+	Answer        string `json:"answer"`
+	StartDate     string `json:"start_date"`
+	EndDate       string `json:"end_date"`
+	RecurringType string `json:"recurring_type"`
+	Time          string `json:"time"`
+	DayOfWeek     string `json:"day_of_week"`
+	DayOfMonth    string `json:"day_of_month"`
 }
 
 // LLMOutputMulti represents the output JSON from LLM
@@ -205,6 +209,14 @@ func (c *OpenAIClient) ParseMessage(ctx context.Context, prompt string, input st
 			if strings.TrimSpace(op.Label) == "" || strings.TrimSpace(op.Datetime) == "" {
 				return result, fmt.Errorf("for 'create' operation, 'label' and 'datetime' are required")
 			}
+		} else if op.Action == "create_recurring" {
+			if strings.TrimSpace(op.Label) == "" ||
+				(strings.TrimSpace(op.Time) == "" && strings.TrimSpace(op.Datetime) == "") {
+				return result, fmt.Errorf("for 'create_recurring' operation, 'label' and 'time' are required")
+			}
+			if strings.TrimSpace(op.RecurringType) == "" {
+				return result, fmt.Errorf("for 'create_recurring' operation, 'recurring_type' is required")
+			}
 		} else if op.Action == "adjust" || op.Action == "delete" {
 			if strings.TrimSpace(op.ReminderID) == "" {
 				return result, fmt.Errorf("for '%s' operation, 'reminder_id' is required", op.Action)
@@ -225,12 +237,16 @@ func getDefaultAnswer(action string) string {
 	switch action {
 	case "create":
 		return "Напоминание создано."
+	case "create_recurring":
+		return "Повторяющееся напоминание создано."
 	case "adjust":
 		return "Напоминание изменено."
 	case "delete":
 		return "Напоминание удалено."
 	case "show_list":
 		return "Вот список напоминаний."
+	case "show_recurring":
+		return "Вот список повторяющихся напоминаний."
 	default:
 		return "Операция выполнена."
 	}

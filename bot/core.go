@@ -52,6 +52,9 @@ func (b *ReminderBot) Start() error {
 	// Start reminder checker
 	go b.checkReminders()
 
+	// Start recurring reminder checker
+	go b.startRecurringChecker()
+
 	// Start update listener
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60

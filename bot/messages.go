@@ -21,12 +21,24 @@ func (b *ReminderBot) handleTextMessage(msg *tgbotapi.Message) {
 		return
 	}
 
+	// Get user recurring reminders for context
+	recurringReminders, err := b.getUserRecurringRemindersAsMap(msg.From.ID)
+	if err != nil {
+		b.logger.Printf("Error getting user recurring reminders: %v", err)
+		reply := tgbotapi.NewMessage(msg.Chat.ID, "Произошла ошибка при обработке запроса.")
+		b.bot.Send(reply)
+		return
+	}
+
+	// Combine both reminder types
+	allReminders := append(userReminders, recurringReminders...)
+
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), b.config.APITimeout)
 	defer cancel()
 
 	// Parse message with LLM
-	llmOutput, err := b.llmClient.ParseMessage(ctx, llmPrompt, msg.Text, userReminders)
+	llmOutput, err := b.llmClient.ParseMessage(ctx, llmPrompt, msg.Text, allReminders)
 	if err != nil {
 		b.logger.Printf("Error parsing message with LLM: %v", err)
 		reply := tgbotapi.NewMessage(msg.Chat.ID, "Не смог разобрать запрос. Попробуйте переформулировать.")
@@ -51,6 +63,18 @@ func (b *ReminderBot) handleEditedMessage(msg *tgbotapi.Message) {
 		return
 	}
 
+	// Get user recurring reminders for context
+	recurringReminders, err := b.getUserRecurringRemindersAsMap(msg.From.ID)
+	if err != nil {
+		b.logger.Printf("Error getting user recurring reminders: %v", err)
+		reply := tgbotapi.NewMessage(msg.Chat.ID, "Произошла ошибка при обработке запроса.")
+		b.bot.Send(reply)
+		return
+	}
+
+	// Combine both reminder types
+	allReminders := append(userReminders, recurringReminders...)
+
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), b.config.APITimeout)
 	defer cancel()
@@ -59,7 +83,7 @@ func (b *ReminderBot) handleEditedMessage(msg *tgbotapi.Message) {
 	editedText := "Отредактировано: " + msg.Text
 
 	// Parse message with LLM
-	llmOutput, err := b.llmClient.ParseMessage(ctx, llmPrompt, editedText, userReminders)
+	llmOutput, err := b.llmClient.ParseMessage(ctx, llmPrompt, editedText, allReminders)
 	if err != nil {
 		b.logger.Printf("Error parsing edited message with LLM: %v", err)
 		reply := tgbotapi.NewMessage(msg.Chat.ID, "Не смог разобрать отредактированный запрос. Попробуйте ещё раз.")
@@ -113,8 +137,20 @@ func (b *ReminderBot) handleVoiceMessage(msg *tgbotapi.Message) {
 		return
 	}
 
+	// Get user recurring reminders for context
+	recurringReminders, err := b.getUserRecurringRemindersAsMap(msg.From.ID)
+	if err != nil {
+		b.logger.Printf("Error getting user recurring reminders: %v", err)
+		reply := tgbotapi.NewMessage(msg.Chat.ID, "Произошла ошибка при обработке запроса.")
+		b.bot.Send(reply)
+		return
+	}
+
+	// Combine both reminder types
+	allReminders := append(userReminders, recurringReminders...)
+
 	// Parse transcription with LLM
-	llmOutput, err := b.llmClient.ParseMessage(ctx, llmPrompt, transcription, userReminders)
+	llmOutput, err := b.llmClient.ParseMessage(ctx, llmPrompt, transcription, allReminders)
 	if err != nil {
 		b.logger.Printf("Error parsing transcription with LLM: %v", err)
 		reply := tgbotapi.NewMessage(msg.Chat.ID, "Не смог разобрать запрос из голосового сообщения. Попробуйте ещё раз.")
@@ -178,8 +214,20 @@ func (b *ReminderBot) handleVideoMessage(msg *tgbotapi.Message) {
 		return
 	}
 
+	// Get user recurring reminders for context
+	recurringReminders, err := b.getUserRecurringRemindersAsMap(msg.From.ID)
+	if err != nil {
+		b.logger.Printf("Error getting user recurring reminders: %v", err)
+		reply := tgbotapi.NewMessage(msg.Chat.ID, "Произошла ошибка при обработке запроса.")
+		b.bot.Send(reply)
+		return
+	}
+
+	// Combine both reminder types
+	allReminders := append(userReminders, recurringReminders...)
+
 	// Parse transcription with LLM
-	llmOutput, err := b.llmClient.ParseMessage(ctx, llmPrompt, transcription, userReminders)
+	llmOutput, err := b.llmClient.ParseMessage(ctx, llmPrompt, transcription, allReminders)
 	if err != nil {
 		b.logger.Printf("Error parsing transcription with LLM: %v", err)
 		reply := tgbotapi.NewMessage(msg.Chat.ID, "Не смог разобрать запрос из видео. Попробуйте ещё раз.")

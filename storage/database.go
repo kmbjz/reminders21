@@ -70,6 +70,23 @@ func (r *ReminderRepository) initSchema() error {
 	
 	CREATE INDEX IF NOT EXISTS idx_reminders_time ON reminders(reminder_time);
 	CREATE INDEX IF NOT EXISTS idx_reminders_user ON reminders(user_id);
+	
+	CREATE TABLE IF NOT EXISTS recurring_reminders (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		chat_id INTEGER NOT NULL,
+		user_id INTEGER NOT NULL,
+		label TEXT NOT NULL,
+		created_at TIMESTAMP NOT NULL,
+		recurring_type TEXT NOT NULL,
+		time TEXT NOT NULL,
+		day_of_week INTEGER DEFAULT NULL,
+		day_of_month INTEGER DEFAULT NULL,
+		last_triggered TIMESTAMP DEFAULT NULL,
+		active BOOLEAN NOT NULL DEFAULT 1
+	);
+	
+	CREATE INDEX IF NOT EXISTS idx_recurring_user_id ON recurring_reminders(user_id);
+	CREATE INDEX IF NOT EXISTS idx_recurring_active ON recurring_reminders(active);
 	`
 	_, err := r.db.Exec(createTableSQL)
 	return err
