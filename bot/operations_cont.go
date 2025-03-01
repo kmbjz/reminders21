@@ -3,7 +3,6 @@ package bot
 import (
 	"fmt"
 	"reminders21/storage"
-	"strconv"
 	"strings"
 	"time"
 
@@ -12,35 +11,35 @@ import (
 	"reminders21/utils"
 )
 
-// processDeleteOperation processes delete operation
-func (b *ReminderBot) processDeleteOperation(op llm.Operation, msg *tgbotapi.Message) {
-	reminderID, err := strconv.ParseInt(op.ReminderID, 10, 64)
-	if err != nil {
-		b.logger.Printf("Error parsing reminder ID: %v", err)
-		reply := tgbotapi.NewMessage(msg.Chat.ID, "Неверный формат ID напоминания.")
-		b.bot.Send(reply)
-		return
-	}
-
-	deleted, err := b.repo.DeleteReminder(reminderID, msg.From.ID)
-	if err != nil {
-		b.logger.Printf("Error deleting reminder: %v", err)
-		reply := tgbotapi.NewMessage(msg.Chat.ID, "Ошибка при удалении напоминания.")
-		b.bot.Send(reply)
-		return
-	}
-
-	if !deleted {
-		reply := tgbotapi.NewMessage(msg.Chat.ID, "Напоминание не найдено или не принадлежит вам.")
-		b.bot.Send(reply)
-		return
-	}
-
-	b.logger.Printf("Deleted reminder: ID=%s (chat %d)", op.ReminderID, msg.Chat.ID)
-
-	reply := tgbotapi.NewMessage(msg.Chat.ID, op.Answer)
-	b.bot.Send(reply)
-}
+//// processDeleteOperation processes delete operation
+//func (b *ReminderBot) processDeleteOperation(op llm.Operation, msg *tgbotapi.Message) {
+//	reminderID, err := strconv.ParseInt(op.ReminderID, 10, 64)
+//	if err != nil {
+//		b.logger.Printf("Error parsing reminder ID: %v", err)
+//		reply := tgbotapi.NewMessage(msg.Chat.ID, "Неверный формат ID напоминания.")
+//		b.bot.Send(reply)
+//		return
+//	}
+//
+//	deleted, err := b.repo.DeleteReminder(reminderID, msg.From.ID)
+//	if err != nil {
+//		b.logger.Printf("Error deleting reminder: %v", err)
+//		reply := tgbotapi.NewMessage(msg.Chat.ID, "Ошибка при удалении напоминания.")
+//		b.bot.Send(reply)
+//		return
+//	}
+//
+//	if !deleted {
+//		reply := tgbotapi.NewMessage(msg.Chat.ID, "Напоминание не найдено или не принадлежит вам.")
+//		b.bot.Send(reply)
+//		return
+//	}
+//
+//	b.logger.Printf("Deleted reminder: ID=%s (chat %d)", op.ReminderID, msg.Chat.ID)
+//
+//	reply := tgbotapi.NewMessage(msg.Chat.ID, op.Answer)
+//	b.bot.Send(reply)
+//}
 
 // processShowListOperation processes show_list operation
 func (b *ReminderBot) processShowListOperation(op llm.Operation, msg *tgbotapi.Message) {
