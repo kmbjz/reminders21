@@ -89,7 +89,7 @@ func (r *ReminderRepository) GetUserRecurringReminders(userID int64) ([]Recurrin
 	query := `
 	SELECT id, chat_id, user_id, label, created_at, recurring_type, 
 	       time, IFNULL(day_of_week, -1), IFNULL(day_of_month, -1), 
-	       IFNULL(last_triggered, '1970-01-01 00:00:00'), active
+	       last_triggered, active
 	FROM recurring_reminders
 	WHERE user_id = ? AND active = 1
 	ORDER BY created_at DESC
@@ -105,11 +105,12 @@ func (r *ReminderRepository) GetUserRecurringReminders(userID int64) ([]Recurrin
 	for rows.Next() {
 		var r RecurringReminder
 		var recurringTypeStr string
+		var lastTriggered sql.NullTime
 
 		err := rows.Scan(
 			&r.ID, &r.ChatID, &r.UserID, &r.Label, &r.CreatedAt,
 			&recurringTypeStr, &r.Time, &r.DayOfWeek, &r.DayOfMonth,
-			&r.LastTriggered, &r.Active,
+			&lastTriggered, &r.Active,
 		)
 
 		if err != nil {
@@ -117,6 +118,14 @@ func (r *ReminderRepository) GetUserRecurringReminders(userID int64) ([]Recurrin
 		}
 
 		r.RecurringType = RecurringType(recurringTypeStr)
+
+		// Handle last_triggered time
+		if lastTriggered.Valid {
+			r.LastTriggered = lastTriggered.Time
+		} else {
+			r.LastTriggered = time.Time{}
+		}
+
 		reminders = append(reminders, r)
 	}
 
@@ -197,9 +206,18 @@ func (r *ReminderRepository) GetDueRecurringReminders(now time.Time) ([]Recurrin
 	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 
 	query := `
-	SELECT id, chat_id, user_id, label, created_at, recurring_type, 
-		   time, IFNULL(day_of_week, -1), IFNULL(day_of_month, -1), 
-		   IFNULL(last_triggered, '1970-01-01 00:00:00'), active
+	SELECT 
+		id, 
+		chat_id, 
+		user_id, 
+		label, 
+		created_at, 
+		recurring_type, 
+		time, 
+		IFNULL(day_of_week, -1) as day_of_week, 
+		IFNULL(day_of_month, -1) as day_of_month, 
+		last_triggered, 
+		active
 	FROM recurring_reminders
 	WHERE active = 1 
 	  AND time = ? 
@@ -209,7 +227,7 @@ func (r *ReminderRepository) GetDueRecurringReminders(now time.Time) ([]Recurrin
 		  (recurring_type = 'monthly' AND day_of_month = ?)
 	  )
 	  AND (last_triggered IS NULL OR last_triggered < ?)
-	`
+`
 
 	rows, err := r.db.Query(
 		query,
@@ -229,14 +247,22 @@ func (r *ReminderRepository) GetDueRecurringReminders(now time.Time) ([]Recurrin
 		var r RecurringReminder
 		var recurringTypeStr string
 
+		// During scanning:
+		var lastTriggered sql.NullTime
 		err := rows.Scan(
 			&r.ID, &r.ChatID, &r.UserID, &r.Label, &r.CreatedAt,
 			&recurringTypeStr, &r.Time, &r.DayOfWeek, &r.DayOfMonth,
-			&r.LastTriggered, &r.Active,
+			&lastTriggered, &r.Active,
 		)
 
 		if err != nil {
 			return nil, err
+		}
+
+		if lastTriggered.Valid {
+			r.LastTriggered = lastTriggered.Time
+		} else {
+			r.LastTriggered = time.Time{}
 		}
 
 		r.RecurringType = RecurringType(recurringTypeStr)
