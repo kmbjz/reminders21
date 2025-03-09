@@ -99,7 +99,7 @@ func (b *ReminderBot) addRecurringReminder(msg *tgbotapi.Message, label string, 
 		recurringText = fmt.Sprintf("каждое %d число месяца в %s", dayOfMonth, timeStr)
 	}
 
-	answer := fmt.Sprintf("Создано повторяющееся напоминание: %s (%s)", label, recurringText)
+	answer := fmt.Sprintf("Создано регулярное напоминание: %s (%s)", label, recurringText)
 	reply := tgbotapi.NewMessage(msg.Chat.ID, answer)
 	b.bot.Send(reply)
 
@@ -153,7 +153,7 @@ func (b *ReminderBot) processDeleteRecurringOperation(reminderID int64, msg *tgb
 	}
 
 	if !deleted {
-		reply := tgbotapi.NewMessage(msg.Chat.ID, "Повторяющееся напоминание не найдено или не принадлежит вам.")
+		reply := tgbotapi.NewMessage(msg.Chat.ID, "Регулярное напоминание не найдено или не принадлежит вам.")
 		b.bot.Send(reply)
 		return
 	}
@@ -161,7 +161,7 @@ func (b *ReminderBot) processDeleteRecurringOperation(reminderID int64, msg *tgb
 	b.logger.Printf("Deleted recurring reminder: ID=%d (chat %d)", reminderID, msg.Chat.ID)
 
 	if answer == "" {
-		answer = "Повторяющееся напоминание удалено."
+		answer = "Регулярное напоминание удалено."
 	}
 	reply := tgbotapi.NewMessage(msg.Chat.ID, answer)
 	b.bot.Send(reply)

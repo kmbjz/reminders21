@@ -122,7 +122,7 @@ func (c *OpenAIClient) ParseMessage(ctx context.Context, prompt string, input st
 
 	// Create request body
 	reqBodyMap := map[string]interface{}{
-		"model": "gpt-4",
+		"model": "gpt-4o",
 		"messages": []map[string]string{
 			{"role": "developer", "content": fullPrompt},
 			{"role": "user", "content": input},
@@ -238,7 +238,7 @@ func getDefaultAnswer(action string) string {
 	case "create":
 		return "Напоминание создано."
 	case "create_recurring":
-		return "Повторяющееся напоминание создано."
+		return "Регулярное напоминание создано."
 	case "adjust":
 		return "Напоминание изменено."
 	case "delete":
@@ -246,7 +246,7 @@ func getDefaultAnswer(action string) string {
 	case "show_list":
 		return "Вот список напоминаний."
 	case "show_recurring":
-		return "Вот список повторяющихся напоминаний."
+		return "Вот список регулярных напоминаний."
 	default:
 		return "Операция выполнена."
 	}

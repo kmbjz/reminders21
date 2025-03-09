@@ -289,7 +289,7 @@ func (b *ReminderBot) processAdjustRecurringOperation(reminderID int64, op llm.O
 	}
 
 	if !found {
-		reply := tgbotapi.NewMessage(msg.Chat.ID, "Повторяющееся напоминание не найдено или не принадлежит вам.")
+		reply := tgbotapi.NewMessage(msg.Chat.ID, "Регулярное напоминание не найдено или не принадлежит вам.")
 		b.bot.Send(reply)
 		return
 	}
@@ -358,7 +358,7 @@ func (b *ReminderBot) processAdjustRecurringOperation(reminderID int64, op llm.O
 	}
 
 	if !updated {
-		reply := tgbotapi.NewMessage(msg.Chat.ID, "Не удалось изменить повторяющееся напоминание.")
+		reply := tgbotapi.NewMessage(msg.Chat.ID, "Не удалось изменить регулярное напоминание.")
 		b.bot.Send(reply)
 		return
 	}
@@ -367,7 +367,7 @@ func (b *ReminderBot) processAdjustRecurringOperation(reminderID int64, op llm.O
 
 	answer := op.Answer
 	if answer == "" {
-		answer = "Повторяющееся напоминание изменено."
+		answer = "Регулярное напоминание изменено."
 	}
 
 	reply := tgbotapi.NewMessage(msg.Chat.ID, answer)
