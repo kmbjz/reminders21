@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -57,8 +58,9 @@ func (r *ReminderRepository) Close() error {
 	return r.db.Close()
 }
 
-// initSchema creates tables if they don't exist
+// initSchema creates tables if they don't exist and migrates existing tables
 func (r *ReminderRepository) initSchema() error {
+	// First, create tables if they don't exist
 	createTableSQL := `
     CREATE TABLE IF NOT EXISTS reminders (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,8 +68,7 @@ func (r *ReminderRepository) initSchema() error {
         user_id INTEGER,
         reminder_time DATETIME,
         label TEXT,
-        notified INTEGER DEFAULT 0,
-        is_todo INTEGER DEFAULT 0
+        notified INTEGER DEFAULT 0
     );
     
     CREATE INDEX IF NOT EXISTS idx_reminders_time ON reminders(reminder_time);
@@ -84,8 +85,7 @@ func (r *ReminderRepository) initSchema() error {
         day_of_week INTEGER DEFAULT NULL,
         day_of_month INTEGER DEFAULT NULL,
         last_triggered TIMESTAMP DEFAULT NULL,
-        active BOOLEAN NOT NULL DEFAULT 1,
-        is_todo INTEGER DEFAULT 0
+        active BOOLEAN NOT NULL DEFAULT 1
     );
     
     CREATE INDEX IF NOT EXISTS idx_recurring_user_id ON recurring_reminders(user_id);
@@ -99,7 +99,46 @@ func (r *ReminderRepository) initSchema() error {
     );
     `
 	_, err := r.db.Exec(createTableSQL)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Now handle migrations for existing tables
+	// Add is_todo column to reminders table if it doesn't exist
+	err = r.addColumnIfNotExists("reminders", "is_todo", "INTEGER DEFAULT 0")
+	if err != nil {
+		return err
+	}
+
+	// Add is_todo column to recurring_reminders table if it doesn't exist
+	err = r.addColumnIfNotExists("recurring_reminders", "is_todo", "INTEGER DEFAULT 0")
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// addColumnIfNotExists adds a column to a table if it doesn't already exist
+func (r *ReminderRepository) addColumnIfNotExists(table, column, definition string) error {
+	// Check if the column exists
+	var dummy string
+	query := fmt.Sprintf("SELECT %s FROM %s LIMIT 1", column, table)
+
+	err := r.db.QueryRow(query).Scan(&dummy)
+	if err != nil {
+		// Column doesn't exist, add it
+		if err == sql.ErrNoRows || strings.Contains(err.Error(), "no such column") {
+			r.logger.Printf("Adding column %s to table %s", column, table)
+			alterQuery := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition)
+			_, err := r.db.Exec(alterQuery)
+			return err
+		}
+		return err
+	}
+
+	// Column already exists
+	return nil
 }
 
 // AddReminder adds a new reminder

@@ -247,10 +247,11 @@ func sortLinesByDateTimeWithTodos(lines []string) {
 
 // RecurringEvent represents a recurring reminder occurrence on a specific date
 type RecurringEvent struct {
-	ID    int64
-	Label string
-	Time  string
-	Date  time.Time
+	ID     int64
+	Label  string
+	Time   string
+	Date   time.Time
+	IsTodo bool
 }
 
 // getApplicableRecurringReminders retrieves recurring reminders applicable within a date range
