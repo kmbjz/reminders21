@@ -28,6 +28,9 @@ func (b *ReminderBot) handleCommand(msg *tgbotapi.Message) {
 		reply := tgbotapi.NewMessage(msg.Chat.ID, welcome)
 		b.bot.Send(reply)
 
+	case "timezone":
+		b.handleTimezoneCommand(msg)
+
 	case "list":
 		reminders, err := b.repo.GetUserReminders(msg.From.ID)
 		if err != nil {
@@ -150,4 +153,53 @@ func (b *ReminderBot) handleCommand(msg *tgbotapi.Message) {
 		reply := tgbotapi.NewMessage(msg.Chat.ID, "Неизвестная команда. Используйте /help для справки.")
 		b.bot.Send(reply)
 	}
+}
+
+// handleTimezoneCommand handles timezone setting
+func (b *ReminderBot) handleTimezoneCommand(msg *tgbotapi.Message) {
+	// Check if there's an argument
+	args := strings.TrimSpace(msg.CommandArguments())
+
+	if args == "" {
+		// No timezone provided, show current timezone and instructions
+		timezone, err := b.repo.GetUserTimezone(msg.From.ID)
+		if err != nil {
+			b.logger.Printf("Error getting timezone: %v", err)
+			timezone = "Europe/Moscow"
+		}
+
+		replyText := fmt.Sprintf(`Твой текущий часовой пояс: %s
+
+Чтобы изменить часовой пояс, используй команду:
+/timezone Europe/Moscow
+
+Популярные часовые пояса России:
+- Europe/Moscow - Москва, Санкт-Петербург
+- Europe/Kaliningrad - Калининград
+- Europe/Samara - Самара
+- Asia/Yekaterinburg - Екатеринбург
+- Asia/Omsk - Омск
+- Asia/Krasnoyarsk - Красноярск
+- Asia/Irkutsk - Иркутск
+- Asia/Yakutsk - Якутск
+- Asia/Vladivostok - Владивосток
+- Asia/Magadan - Магадан
+- Asia/Kamchatka - Камчатка`, timezone)
+
+		reply := tgbotapi.NewMessage(msg.Chat.ID, replyText)
+		b.bot.Send(reply)
+		return
+	}
+
+	// Try to set the timezone
+	err := b.repo.SetUserTimezone(msg.From.ID, args)
+	if err != nil {
+		b.logger.Printf("Error setting timezone: %v", err)
+		reply := tgbotapi.NewMessage(msg.Chat.ID, "Неверный часовой пояс. Пожалуйста, используй формат 'Continent/City', например 'Europe/Moscow'.")
+		b.bot.Send(reply)
+		return
+	}
+
+	reply := tgbotapi.NewMessage(msg.Chat.ID, fmt.Sprintf("Часовой пояс установлен: %s", args))
+	b.bot.Send(reply)
 }

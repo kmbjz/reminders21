@@ -61,6 +61,7 @@ type Operation struct {
 	Time          string `json:"time"`
 	DayOfWeek     string `json:"day_of_week"`
 	DayOfMonth    string `json:"day_of_month"`
+	Timezone      string `json:"timezone"` // Added for timezone operations
 }
 
 // LLMOutputMulti represents the output JSON from LLM

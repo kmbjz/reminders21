@@ -57,37 +57,45 @@ func (r *ReminderRepository) Close() error {
 }
 
 // initSchema creates tables if they don't exist
+// initSchema creates tables if they don't exist
 func (r *ReminderRepository) initSchema() error {
 	createTableSQL := `
-	CREATE TABLE IF NOT EXISTS reminders (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		chat_id INTEGER,
-		user_id INTEGER,
-		reminder_time DATETIME,
-		label TEXT,
-		notified INTEGER DEFAULT 0
-	);
-	
-	CREATE INDEX IF NOT EXISTS idx_reminders_time ON reminders(reminder_time);
-	CREATE INDEX IF NOT EXISTS idx_reminders_user ON reminders(user_id);
-	
-	CREATE TABLE IF NOT EXISTS recurring_reminders (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		chat_id INTEGER NOT NULL,
-		user_id INTEGER NOT NULL,
-		label TEXT NOT NULL,
-		created_at TIMESTAMP NOT NULL,
-		recurring_type TEXT NOT NULL,
-		time TEXT NOT NULL,
-		day_of_week INTEGER DEFAULT NULL,
-		day_of_month INTEGER DEFAULT NULL,
-		last_triggered TIMESTAMP DEFAULT NULL,
-		active BOOLEAN NOT NULL DEFAULT 1
-	);
-	
-	CREATE INDEX IF NOT EXISTS idx_recurring_user_id ON recurring_reminders(user_id);
-	CREATE INDEX IF NOT EXISTS idx_recurring_active ON recurring_reminders(active);
-	`
+    CREATE TABLE IF NOT EXISTS reminders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id INTEGER,
+        user_id INTEGER,
+        reminder_time DATETIME,
+        label TEXT,
+        notified INTEGER DEFAULT 0
+    );
+    
+    CREATE INDEX IF NOT EXISTS idx_reminders_time ON reminders(reminder_time);
+    CREATE INDEX IF NOT EXISTS idx_reminders_user ON reminders(user_id);
+    
+    CREATE TABLE IF NOT EXISTS recurring_reminders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        label TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL,
+        recurring_type TEXT NOT NULL,
+        time TEXT NOT NULL,
+        day_of_week INTEGER DEFAULT NULL,
+        day_of_month INTEGER DEFAULT NULL,
+        last_triggered TIMESTAMP DEFAULT NULL,
+        active BOOLEAN NOT NULL DEFAULT 1
+    );
+    
+    CREATE INDEX IF NOT EXISTS idx_recurring_user_id ON recurring_reminders(user_id);
+    CREATE INDEX IF NOT EXISTS idx_recurring_active ON recurring_reminders(active);
+    
+    CREATE TABLE IF NOT EXISTS user_preferences (
+        user_id INTEGER PRIMARY KEY,
+        timezone TEXT NOT NULL DEFAULT 'Europe/Moscow',
+        created_at TIMESTAMP NOT NULL,
+        updated_at TIMESTAMP NOT NULL
+    );
+    `
 	_, err := r.db.Exec(createTableSQL)
 	return err
 }
@@ -326,4 +334,67 @@ func (r *ReminderRepository) MarkMultipleAsNotified(ids []int64) error {
 	}
 
 	return tx.Commit()
+}
+
+// UserPreferences represents user preferences in the database
+type UserPreferences struct {
+	UserID    int64
+	Timezone  string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// GetUserTimezone gets a user's timezone
+func (r *ReminderRepository) GetUserTimezone(userID int64) (string, error) {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+
+	var timezone string
+	err := r.db.QueryRow(
+		"SELECT timezone FROM user_preferences WHERE user_id = ?",
+		userID,
+	).Scan(&timezone)
+
+	if err == sql.ErrNoRows {
+		// Default to Moscow time if no preference is set
+		timezone = "Europe/Moscow"
+		// Create a default preference
+		_, err = r.db.Exec(
+			"INSERT INTO user_preferences (user_id, timezone, created_at, updated_at) VALUES (?, ?, ?, ?)",
+			userID, timezone, time.Now(), time.Now(),
+		)
+		if err != nil {
+			return timezone, nil // Return default even if insert fails
+		}
+		return timezone, nil
+	}
+
+	if err != nil {
+		return "Europe/Moscow", err // Return default timezone on error
+	}
+
+	return timezone, nil
+}
+
+// SetUserTimezone sets a user's timezone
+func (r *ReminderRepository) SetUserTimezone(userID int64, timezone string) error {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+
+	// Validate timezone string
+	_, err := time.LoadLocation(timezone)
+	if err != nil {
+		return fmt.Errorf("invalid timezone: %s", timezone)
+	}
+
+	now := time.Now()
+	_, err = r.db.Exec(
+		`INSERT INTO user_preferences (user_id, timezone, created_at, updated_at) 
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(user_id) DO UPDATE SET
+         timezone = ?, updated_at = ?`,
+		userID, timezone, now, now,
+		timezone, now,
+	)
+	return err
 }

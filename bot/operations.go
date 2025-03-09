@@ -27,6 +27,8 @@ func (b *ReminderBot) processOperations(operations []llm.Operation, msg *tgbotap
 			b.processShowListOperation(op, msg)
 		case "show_recurring":
 			b.processListRecurringOperation(msg)
+		case "set_timezone":
+			b.processSetTimezoneOperation(op, msg)
 		default:
 			reply := tgbotapi.NewMessage(msg.Chat.ID, "Неизвестная операция. Попробуйте переформулировать запрос.")
 			b.bot.Send(reply)
@@ -34,9 +36,36 @@ func (b *ReminderBot) processOperations(operations []llm.Operation, msg *tgbotap
 	}
 }
 
+// processSetTimezoneOperation processes set_timezone operation
+func (b *ReminderBot) processSetTimezoneOperation(op llm.Operation, msg *tgbotapi.Message) {
+	timezone := strings.TrimSpace(op.Timezone)
+	if timezone == "" {
+		reply := tgbotapi.NewMessage(msg.Chat.ID, "Не удалось определить часовой пояс. Пожалуйста, укажите в формате 'Continent/City', например 'Europe/Moscow'.")
+		b.bot.Send(reply)
+		return
+	}
+
+	err := b.repo.SetUserTimezone(msg.From.ID, timezone)
+	if err != nil {
+		b.logger.Printf("Error setting timezone: %v", err)
+		reply := tgbotapi.NewMessage(msg.Chat.ID, "Неверный часовой пояс. Пожалуйста, используйте формат 'Continent/City', например 'Europe/Moscow'.")
+		b.bot.Send(reply)
+		return
+	}
+
+	answer := op.Answer
+	if answer == "" {
+		answer = fmt.Sprintf("Часовой пояс установлен: %s", timezone)
+	}
+
+	reply := tgbotapi.NewMessage(msg.Chat.ID, answer)
+	b.bot.Send(reply)
+}
+
 // processCreateOperation processes create operation
 func (b *ReminderBot) processCreateOperation(op llm.Operation, msg *tgbotapi.Message) {
-	reminderTime, err := time.Parse("2006-01-02 15:04:05", op.Datetime)
+	// Parse the time in UTC (as stored in database)
+	reminderTimeUTC, err := time.Parse("2006-01-02 15:04:05", op.Datetime)
 	if err != nil {
 		b.logger.Printf("Error parsing date/time in create operation: %v", err)
 		reply := tgbotapi.NewMessage(msg.Chat.ID, "Неверный формат даты/времени в операции создания.")
@@ -44,8 +73,23 @@ func (b *ReminderBot) processCreateOperation(op llm.Operation, msg *tgbotapi.Mes
 		return
 	}
 
-	// Add reminder to database
-	id, err := b.repo.AddReminder(msg.Chat.ID, msg.From.ID, reminderTime, op.Label)
+	// Get user's timezone preference
+	timezone, err := b.repo.GetUserTimezone(msg.From.ID)
+	if err != nil {
+		b.logger.Printf("Error getting user timezone: %v", err)
+		timezone = "Europe/Moscow" // Default fallback
+	}
+
+	// Convert time to user's timezone for display
+	userLocation, err := time.LoadLocation(timezone)
+	if err != nil {
+		b.logger.Printf("Error loading timezone: %v", err)
+		userLocation = time.UTC
+	}
+	reminderTimeUser := reminderTimeUTC.In(userLocation)
+
+	// Add reminder to database (still using UTC time)
+	id, err := b.repo.AddReminder(msg.Chat.ID, msg.From.ID, reminderTimeUTC, op.Label)
 	if err != nil {
 		b.logger.Printf("Error adding reminder: %v", err)
 		reply := tgbotapi.NewMessage(msg.Chat.ID, "Ошибка при создании напоминания.")
@@ -53,12 +97,14 @@ func (b *ReminderBot) processCreateOperation(op llm.Operation, msg *tgbotapi.Mes
 		return
 	}
 
-	b.logger.Printf("Created reminder: ID=%d, '%s' at %s (chat %d)", id, op.Label, reminderTime.Format("2006-01-02 15:04:05"), msg.Chat.ID)
+	b.logger.Printf("Created reminder: ID=%d, '%s' at %s (chat %d, timezone %s)",
+		id, op.Label, reminderTimeUTC.Format("2006-01-02 15:04:05"), msg.Chat.ID, timezone)
 
-	// Format answer with human-readable time
+	// Format answer with human-readable time in user's timezone
 	answer := op.Answer
 	if answer == "" {
-		answer = fmt.Sprintf("Создано напоминание: %s в %s", op.Label, reminderTime.Format("02.01.2006 15:04"))
+		answer = fmt.Sprintf("Создано напоминание: %s в %s",
+			op.Label, reminderTimeUser.Format("02.01.2006 15:04"))
 	}
 
 	reply := tgbotapi.NewMessage(msg.Chat.ID, answer)
