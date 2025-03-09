@@ -27,6 +27,7 @@ type RecurringReminder struct {
 	DayOfMonth    int    // 1-31 for monthly reminders
 	LastTriggered time.Time
 	Active        bool
+	IsTodo        bool
 }
 
 // AddRecurringReminder adds a new recurring reminder
@@ -35,7 +36,8 @@ func (r *ReminderRepository) AddRecurringReminder(
 	label string,
 	recurringType RecurringType,
 	timeStr string,
-	dayOfWeek, dayOfMonth int) (int64, error) {
+	dayOfWeek, dayOfMonth int,
+	isTodo bool) (int64, error) {
 
 	r.lock.Lock()
 	defer r.lock.Unlock()
@@ -52,9 +54,9 @@ func (r *ReminderRepository) AddRecurringReminder(
 
 	result, err := tx.Exec(
 		`INSERT INTO recurring_reminders (
-			chat_id, user_id, label, created_at, 
-			recurring_type, time, day_of_week, day_of_month, active
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+            chat_id, user_id, label, created_at, 
+            recurring_type, time, day_of_week, day_of_month, active, is_todo
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
 		chatID,
 		userID,
 		label,
@@ -63,6 +65,7 @@ func (r *ReminderRepository) AddRecurringReminder(
 		timeStr,
 		sql.NullInt64{Int64: int64(dayOfWeek), Valid: dayOfWeek >= 0},
 		sql.NullInt64{Int64: int64(dayOfMonth), Valid: dayOfMonth > 0},
+		boolToInt(isTodo),
 	)
 
 	if err != nil {
@@ -87,13 +90,13 @@ func (r *ReminderRepository) GetUserRecurringReminders(userID int64) ([]Recurrin
 	defer r.lock.Unlock()
 
 	query := `
-	SELECT id, chat_id, user_id, label, created_at, recurring_type, 
-	       time, IFNULL(day_of_week, -1), IFNULL(day_of_month, -1), 
-	       last_triggered, active
-	FROM recurring_reminders
-	WHERE user_id = ? AND active = 1
-	ORDER BY created_at DESC
-	`
+    SELECT id, chat_id, user_id, label, created_at, recurring_type, 
+           time, IFNULL(day_of_week, -1), IFNULL(day_of_month, -1), 
+           last_triggered, active, is_todo
+    FROM recurring_reminders
+    WHERE user_id = ? AND active = 1
+    ORDER BY created_at DESC
+    `
 
 	rows, err := r.db.Query(query, userID)
 	if err != nil {
@@ -106,11 +109,12 @@ func (r *ReminderRepository) GetUserRecurringReminders(userID int64) ([]Recurrin
 		var r RecurringReminder
 		var recurringTypeStr string
 		var lastTriggered sql.NullTime
+		var isTodo int
 
 		err := rows.Scan(
 			&r.ID, &r.ChatID, &r.UserID, &r.Label, &r.CreatedAt,
 			&recurringTypeStr, &r.Time, &r.DayOfWeek, &r.DayOfMonth,
-			&lastTriggered, &r.Active,
+			&lastTriggered, &r.Active, &isTodo,
 		)
 
 		if err != nil {
@@ -118,6 +122,7 @@ func (r *ReminderRepository) GetUserRecurringReminders(userID int64) ([]Recurrin
 		}
 
 		r.RecurringType = RecurringType(recurringTypeStr)
+		r.IsTodo = isTodo > 0
 
 		// Handle last_triggered time
 		if lastTriggered.Valid {
@@ -131,6 +136,92 @@ func (r *ReminderRepository) GetUserRecurringReminders(userID int64) ([]Recurrin
 
 	return reminders, nil
 }
+
+// GetDueRecurringReminders gets recurring reminders that are due (excluding todos)
+func (r *ReminderRepository) GetDueRecurringReminders(now time.Time) ([]RecurringReminder, error) {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+
+	// Current time information
+	currentTime := now.Format("15:04")
+	currentDayOfWeek := int(now.Weekday())
+	currentDayOfMonth := now.Day()
+
+	// Calculate the start of today
+	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+
+	query := `
+    SELECT 
+        id, 
+        chat_id, 
+        user_id, 
+        label, 
+        created_at, 
+        recurring_type, 
+        time, 
+        IFNULL(day_of_week, -1) as day_of_week, 
+        IFNULL(day_of_month, -1) as day_of_month, 
+        last_triggered, 
+        active,
+        is_todo
+    FROM recurring_reminders
+    WHERE active = 1 
+      AND is_todo = 0
+      AND time = ? 
+      AND (
+          (recurring_type = 'daily') OR
+          (recurring_type = 'weekly' AND day_of_week = ?) OR
+          (recurring_type = 'monthly' AND day_of_month = ?)
+      )
+      AND (last_triggered IS NULL OR last_triggered < ?)
+`
+
+	rows, err := r.db.Query(
+		query,
+		currentTime,
+		currentDayOfWeek,
+		currentDayOfMonth,
+		startOfToday,
+	)
+
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var reminders []RecurringReminder
+	for rows.Next() {
+		var r RecurringReminder
+		var recurringTypeStr string
+		var isTodo int
+
+		// During scanning:
+		var lastTriggered sql.NullTime
+		err := rows.Scan(
+			&r.ID, &r.ChatID, &r.UserID, &r.Label, &r.CreatedAt,
+			&recurringTypeStr, &r.Time, &r.DayOfWeek, &r.DayOfMonth,
+			&lastTriggered, &r.Active, &isTodo,
+		)
+
+		if err != nil {
+			return nil, err
+		}
+
+		if lastTriggered.Valid {
+			r.LastTriggered = lastTriggered.Time
+		} else {
+			r.LastTriggered = time.Time{}
+		}
+
+		r.RecurringType = RecurringType(recurringTypeStr)
+		r.IsTodo = isTodo > 0
+		reminders = append(reminders, r)
+	}
+
+	return reminders, nil
+}
+
+///////
 
 // UpdateRecurringReminderLastTriggered updates the last_triggered timestamp
 func (r *ReminderRepository) UpdateRecurringReminderLastTriggered(id int64, lastTriggered time.Time) error {
@@ -185,89 +276,4 @@ func (r *ReminderRepository) DeleteRecurringReminder(id, userID int64) (bool, er
 
 	rowsAffected, err := result.RowsAffected()
 	return rowsAffected > 0, err
-}
-
-// GetDueRecurringReminders gets recurring reminders that are due
-func (r *ReminderRepository) GetDueRecurringReminders(now time.Time) ([]RecurringReminder, error) {
-	r.lock.Lock()
-	defer r.lock.Unlock()
-
-	// We need to get recurring reminders where:
-	// 1. For daily: the current time matches the reminder time
-	// 2. For weekly: the current day of week matches and time matches
-	// 3. For monthly: the current day of month matches and time matches
-	// 4. The reminder hasn't been triggered today or was triggered long ago
-
-	currentTime := now.Format("15:04")
-	currentDayOfWeek := int(now.Weekday())
-	currentDayOfMonth := now.Day()
-
-	// Calculate the start of today
-	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-
-	query := `
-	SELECT 
-		id, 
-		chat_id, 
-		user_id, 
-		label, 
-		created_at, 
-		recurring_type, 
-		time, 
-		IFNULL(day_of_week, -1) as day_of_week, 
-		IFNULL(day_of_month, -1) as day_of_month, 
-		last_triggered, 
-		active
-	FROM recurring_reminders
-	WHERE active = 1 
-	  AND time = ? 
-	  AND (
-		  (recurring_type = 'daily') OR
-		  (recurring_type = 'weekly' AND day_of_week = ?) OR
-		  (recurring_type = 'monthly' AND day_of_month = ?)
-	  )
-	  AND (last_triggered IS NULL OR last_triggered < ?)
-`
-
-	rows, err := r.db.Query(
-		query,
-		currentTime,
-		currentDayOfWeek,
-		currentDayOfMonth,
-		startOfToday,
-	)
-
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var reminders []RecurringReminder
-	for rows.Next() {
-		var r RecurringReminder
-		var recurringTypeStr string
-
-		// During scanning:
-		var lastTriggered sql.NullTime
-		err := rows.Scan(
-			&r.ID, &r.ChatID, &r.UserID, &r.Label, &r.CreatedAt,
-			&recurringTypeStr, &r.Time, &r.DayOfWeek, &r.DayOfMonth,
-			&lastTriggered, &r.Active,
-		)
-
-		if err != nil {
-			return nil, err
-		}
-
-		if lastTriggered.Valid {
-			r.LastTriggered = lastTriggered.Time
-		} else {
-			r.LastTriggered = time.Time{}
-		}
-
-		r.RecurringType = RecurringType(recurringTypeStr)
-		reminders = append(reminders, r)
-	}
-
-	return reminders, nil
 }

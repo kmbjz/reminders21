@@ -117,35 +117,132 @@ func (b *ReminderBot) processShowListOperation(op llm.Operation, msg *tgbotapi.M
 	if op.StartDate != "" && op.EndDate == "" {
 		// Format for single day (only time)
 		for _, r := range reminders {
-			lines = append(lines, fmt.Sprintf("%s – %s", r.ReminderTime.Format("15:04"), r.Label))
+			if r.IsTodo {
+				lines = append(lines, fmt.Sprintf("☐ %s", r.Label))
+			} else {
+				lines = append(lines, fmt.Sprintf("%s – %s", r.ReminderTime.Format("15:04"), r.Label))
+			}
 		}
 
 		// Add recurring reminders
 		for _, r := range recurringEvents {
-			lines = append(lines, fmt.Sprintf("%s – %s (регулярное)", r.Time, r.Label))
+			if r.IsTodo {
+				lines = append(lines, fmt.Sprintf("☐ %s (регулярное)", r.Label))
+			} else {
+				lines = append(lines, fmt.Sprintf("%s – %s (регулярное)", r.Time, r.Label))
+			}
 		}
 
-		// Sort lines by time
-		sortLinesByTime(lines)
+		// Sort lines differently based on todo vs reminder
+		sortLinesByTimeWithTodos(lines)
 	} else {
 		// Format with date and time
 		for _, r := range reminders {
-			lines = append(lines, fmt.Sprintf("%s – %s", r.ReminderTime.Format("02.01.2006 15:04"), r.Label))
+			if r.IsTodo {
+				lines = append(lines, fmt.Sprintf("%s ☐ %s", r.ReminderTime.Format("02.01.2006"), r.Label))
+			} else {
+				lines = append(lines, fmt.Sprintf("%s – %s", r.ReminderTime.Format("02.01.2006 15:04"), r.Label))
+			}
 		}
 
 		// Add recurring reminders with date
 		for _, r := range recurringEvents {
-			lines = append(lines, fmt.Sprintf("%s %s – %s (регулярное)",
-				r.Date.Format("02.01.2006"), r.Time, r.Label))
+			if r.IsTodo {
+				lines = append(lines, fmt.Sprintf("%s ☐ %s (регулярное)", r.Date.Format("02.01.2006"), r.Label))
+			} else {
+				lines = append(lines, fmt.Sprintf("%s %s – %s (регулярное)", r.Date.Format("02.01.2006"), r.Time, r.Label))
+			}
 		}
 
 		// Sort lines by date and time
-		sortLinesByDateTime(lines)
+		sortLinesByDateTimeWithTodos(lines)
 	}
 
 	text := title + ":\n" + strings.Join(lines, "\n")
 	reply := tgbotapi.NewMessage(msg.Chat.ID, text)
 	b.bot.Send(reply)
+}
+
+// sortLinesByTimeWithTodos sorts reminder lines with todos first
+func sortLinesByTimeWithTodos(lines []string) {
+	// First separate todos and timed reminders
+	var todos []string
+	var reminders []string
+
+	for _, line := range lines {
+		if strings.HasPrefix(line, "☐") {
+			todos = append(todos, line)
+		} else {
+			reminders = append(reminders, line)
+		}
+	}
+
+	// Sort reminders by time
+	sort.Slice(reminders, func(i, j int) bool {
+		timeI := extractTimeFromLine(reminders[i])
+		timeJ := extractTimeFromLine(reminders[j])
+		return timeI < timeJ
+	})
+
+	// Combine todos and reminders, with todos first
+	copy(lines, append(todos, reminders...))
+}
+
+// sortLinesByDateTimeWithTodos sorts reminder lines by date and time, with todos first per day
+func sortLinesByDateTimeWithTodos(lines []string) {
+	// Group by date
+	dateGroups := make(map[string][]string)
+
+	for _, line := range lines {
+		// Extract date portion (first 10 characters in format "02.01.2006")
+		datePart := line[:10]
+		dateGroups[datePart] = append(dateGroups[datePart], line)
+	}
+
+	// Sort each date group internally
+	for date, group := range dateGroups {
+		var todos []string
+		var reminders []string
+
+		for _, line := range group {
+			if strings.Contains(line, "☐") {
+				todos = append(todos, line)
+			} else {
+				reminders = append(reminders, line)
+			}
+		}
+
+		// Sort reminders by time
+		sort.Slice(reminders, func(i, j int) bool {
+			// Extract time part (after the date)
+			timeI := reminders[i][11:]
+			timeJ := reminders[j][11:]
+			return timeI < timeJ
+		})
+
+		// Replace the group with sorted items, todos first
+		dateGroups[date] = append(todos, reminders...)
+	}
+
+	// Get sorted dates
+	var dates []string
+	for date := range dateGroups {
+		dates = append(dates, date)
+	}
+	sort.Strings(dates)
+
+	// Rebuild the sorted list
+	var result []string
+	for _, date := range dates {
+		result = append(result, dateGroups[date]...)
+	}
+
+	// Replace the original lines with the sorted result
+	for i := range lines {
+		if i < len(result) {
+			lines[i] = result[i]
+		}
+	}
 }
 
 // RecurringEvent represents a recurring reminder occurrence on a specific date

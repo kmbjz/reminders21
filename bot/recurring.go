@@ -69,7 +69,7 @@ func (b *ReminderBot) processRecurringReminders() {
 }
 
 // addRecurringReminder adds a recurring reminder
-func (b *ReminderBot) addRecurringReminder(msg *tgbotapi.Message, label string, recurringType storage.RecurringType, timeStr string, dayOfWeek, dayOfMonth int) {
+func (b *ReminderBot) addRecurringReminder(msg *tgbotapi.Message, label string, recurringType storage.RecurringType, timeStr string, dayOfWeek, dayOfMonth int, isTodo bool) {
 	id, err := b.repo.AddRecurringReminder(
 		msg.Chat.ID,
 		msg.From.ID,
@@ -78,6 +78,7 @@ func (b *ReminderBot) addRecurringReminder(msg *tgbotapi.Message, label string, 
 		timeStr,
 		dayOfWeek,
 		dayOfMonth,
+		isTodo,
 	)
 
 	if err != nil {
@@ -90,21 +91,53 @@ func (b *ReminderBot) addRecurringReminder(msg *tgbotapi.Message, label string, 
 	var recurringText string
 	switch recurringType {
 	case storage.RecurringDaily:
-		recurringText = fmt.Sprintf("каждый день в %s", timeStr)
+		if isTodo {
+			recurringText = fmt.Sprintf("каждый день")
+		} else {
+			recurringText = fmt.Sprintf("каждый день в %s", timeStr)
+		}
 	case storage.RecurringWeekly:
 		weekday := time.Weekday(dayOfWeek)
 		weekdayName := utils.WeekdayToRussian(weekday)
-		recurringText = fmt.Sprintf("каждую %s в %s", weekdayName, timeStr)
+		if isTodo {
+			recurringText = fmt.Sprintf("каждую %s", weekdayName)
+		} else {
+			recurringText = fmt.Sprintf("каждую %s в %s", weekdayName, timeStr)
+		}
 	case storage.RecurringMonthly:
-		recurringText = fmt.Sprintf("каждое %d число месяца в %s", dayOfMonth, timeStr)
+		if isTodo {
+			recurringText = fmt.Sprintf("каждое %d число месяца", dayOfMonth)
+		} else {
+			recurringText = fmt.Sprintf("каждое %d число месяца в %s", dayOfMonth, timeStr)
+		}
 	}
 
-	answer := fmt.Sprintf("Создано регулярное напоминание: %s (%s)", label, recurringText)
+	itemType := "регулярное напоминание"
+	if isTodo {
+		itemType = "регулярную задачу"
+	}
+
+	answer := fmt.Sprintf("Создано %s: %s (%s)", itemType, label, recurringText)
 	reply := tgbotapi.NewMessage(msg.Chat.ID, answer)
+
+	// Add delete button
+	deleteCallback := fmt.Sprintf("delete_rec_%d", id)
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("❌ Удалить", deleteCallback),
+		),
+	)
+	reply.ReplyMarkup = keyboard
+
 	b.bot.Send(reply)
 
-	b.logger.Printf("Created recurring reminder: ID=%d, '%s' recurring=%s (chat %d)",
-		id, label, string(recurringType), msg.Chat.ID)
+	tt := "reminder"
+	if isTodo {
+		tt = "todo"
+	}
+
+	b.logger.Printf("Created recurring %s: ID=%d, '%s' recurring=%s (chat %d)",
+		tt, id, label, string(recurringType), msg.Chat.ID)
 }
 
 // getUserRecurringRemindersAsMap gets user recurring reminders as map for LLM

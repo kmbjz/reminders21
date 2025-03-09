@@ -25,6 +25,7 @@ type ReminderItem struct {
 	ReminderTime time.Time
 	Label        string
 	Notified     bool
+	IsTodo       bool
 }
 
 // NewReminderRepository creates a new ReminderRepository
@@ -57,7 +58,6 @@ func (r *ReminderRepository) Close() error {
 }
 
 // initSchema creates tables if they don't exist
-// initSchema creates tables if they don't exist
 func (r *ReminderRepository) initSchema() error {
 	createTableSQL := `
     CREATE TABLE IF NOT EXISTS reminders (
@@ -66,7 +66,8 @@ func (r *ReminderRepository) initSchema() error {
         user_id INTEGER,
         reminder_time DATETIME,
         label TEXT,
-        notified INTEGER DEFAULT 0
+        notified INTEGER DEFAULT 0,
+        is_todo INTEGER DEFAULT 0
     );
     
     CREATE INDEX IF NOT EXISTS idx_reminders_time ON reminders(reminder_time);
@@ -83,7 +84,8 @@ func (r *ReminderRepository) initSchema() error {
         day_of_week INTEGER DEFAULT NULL,
         day_of_month INTEGER DEFAULT NULL,
         last_triggered TIMESTAMP DEFAULT NULL,
-        active BOOLEAN NOT NULL DEFAULT 1
+        active BOOLEAN NOT NULL DEFAULT 1,
+        is_todo INTEGER DEFAULT 0
     );
     
     CREATE INDEX IF NOT EXISTS idx_recurring_user_id ON recurring_reminders(user_id);
@@ -101,7 +103,7 @@ func (r *ReminderRepository) initSchema() error {
 }
 
 // AddReminder adds a new reminder
-func (r *ReminderRepository) AddReminder(chatID, userID int64, reminderTime time.Time, label string) (int64, error) {
+func (r *ReminderRepository) AddReminder(chatID, userID int64, reminderTime time.Time, label string, isTodo bool) (int64, error) {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 
@@ -116,8 +118,8 @@ func (r *ReminderRepository) AddReminder(chatID, userID int64, reminderTime time
 	}()
 
 	result, err := tx.Exec(
-		"INSERT INTO reminders (chat_id, user_id, reminder_time, label) VALUES (?, ?, ?, ?)",
-		chatID, userID, reminderTime, label,
+		"INSERT INTO reminders (chat_id, user_id, reminder_time, label, is_todo) VALUES (?, ?, ?, ?, ?)",
+		chatID, userID, reminderTime, label, boolToInt(isTodo),
 	)
 	if err != nil {
 		return 0, err
@@ -133,6 +135,14 @@ func (r *ReminderRepository) AddReminder(chatID, userID int64, reminderTime time
 	}
 
 	return id, nil
+}
+
+// Helper function to convert bool to int for SQLite
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // UpdateReminderTime updates the time of a reminder
@@ -209,10 +219,10 @@ func (r *ReminderRepository) GetUserReminders(userID int64) ([]ReminderItem, err
 	defer r.lock.Unlock()
 
 	rows, err := r.db.Query(`
-		SELECT id, chat_id, user_id, reminder_time, label, notified 
-		FROM reminders 
-		WHERE user_id = ? AND notified = 0 
-		ORDER BY reminder_time`, userID)
+        SELECT id, chat_id, user_id, reminder_time, label, notified, is_todo 
+        FROM reminders 
+        WHERE user_id = ? AND notified = 0 
+        ORDER BY reminder_time`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -221,12 +231,13 @@ func (r *ReminderRepository) GetUserReminders(userID int64) ([]ReminderItem, err
 	var reminders []ReminderItem
 	for rows.Next() {
 		var reminder ReminderItem
-		var notified int
-		if err := rows.Scan(&reminder.ID, &reminder.ChatID, &reminder.UserID, &reminder.ReminderTime, &reminder.Label, &notified); err != nil {
+		var notified, isTodo int
+		if err := rows.Scan(&reminder.ID, &reminder.ChatID, &reminder.UserID, &reminder.ReminderTime, &reminder.Label, &notified, &isTodo); err != nil {
 			r.logger.Printf("Error scanning reminder row: %v", err)
 			continue
 		}
 		reminder.Notified = notified > 0
+		reminder.IsTodo = isTodo > 0
 		reminders = append(reminders, reminder)
 	}
 
@@ -239,10 +250,10 @@ func (r *ReminderRepository) GetUserRemindersByPeriod(userID int64, start, end t
 	defer r.lock.Unlock()
 
 	rows, err := r.db.Query(`
-		SELECT id, chat_id, user_id, reminder_time, label, notified 
-		FROM reminders 
-		WHERE user_id = ? AND notified = 0 AND reminder_time >= ? AND reminder_time < ? 
-		ORDER BY reminder_time`, userID, start, end)
+        SELECT id, chat_id, user_id, reminder_time, label, notified, is_todo 
+        FROM reminders 
+        WHERE user_id = ? AND notified = 0 AND reminder_time >= ? AND reminder_time < ? 
+        ORDER BY reminder_time`, userID, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -251,28 +262,29 @@ func (r *ReminderRepository) GetUserRemindersByPeriod(userID int64, start, end t
 	var reminders []ReminderItem
 	for rows.Next() {
 		var reminder ReminderItem
-		var notified int
-		if err := rows.Scan(&reminder.ID, &reminder.ChatID, &reminder.UserID, &reminder.ReminderTime, &reminder.Label, &notified); err != nil {
+		var notified, isTodo int
+		if err := rows.Scan(&reminder.ID, &reminder.ChatID, &reminder.UserID, &reminder.ReminderTime, &reminder.Label, &notified, &isTodo); err != nil {
 			r.logger.Printf("Error scanning reminder row: %v", err)
 			continue
 		}
 		reminder.Notified = notified > 0
+		reminder.IsTodo = isTodo > 0
 		reminders = append(reminders, reminder)
 	}
 
 	return reminders, rows.Err()
 }
 
-// GetDueReminders gets all past-due, unnotified reminders
+// GetDueReminders gets all past-due, unnotified reminders (excluding todos)
 func (r *ReminderRepository) GetDueReminders(before time.Time) ([]ReminderItem, error) {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 
 	rows, err := r.db.Query(`
-		SELECT id, chat_id, user_id, reminder_time, label, notified 
-		FROM reminders 
-		WHERE reminder_time <= ? AND notified = 0 
-		ORDER BY reminder_time`, before)
+        SELECT id, chat_id, user_id, reminder_time, label, notified, is_todo 
+        FROM reminders 
+        WHERE reminder_time <= ? AND notified = 0 AND is_todo = 0
+        ORDER BY reminder_time`, before)
 	if err != nil {
 		return nil, err
 	}
@@ -281,12 +293,13 @@ func (r *ReminderRepository) GetDueReminders(before time.Time) ([]ReminderItem, 
 	var reminders []ReminderItem
 	for rows.Next() {
 		var reminder ReminderItem
-		var notified int
-		if err := rows.Scan(&reminder.ID, &reminder.ChatID, &reminder.UserID, &reminder.ReminderTime, &reminder.Label, &notified); err != nil {
+		var notified, isTodo int
+		if err := rows.Scan(&reminder.ID, &reminder.ChatID, &reminder.UserID, &reminder.ReminderTime, &reminder.Label, &notified, &isTodo); err != nil {
 			r.logger.Printf("Error scanning reminder row: %v", err)
 			continue
 		}
 		reminder.Notified = notified > 0
+		reminder.IsTodo = isTodo > 0
 		reminders = append(reminders, reminder)
 	}
 

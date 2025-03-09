@@ -89,7 +89,7 @@ func (b *ReminderBot) processCreateOperation(op llm.Operation, msg *tgbotapi.Mes
 	reminderTimeUser := reminderTimeUTC.In(userLocation)
 
 	// Add reminder to database (still using UTC time)
-	id, err := b.repo.AddReminder(msg.Chat.ID, msg.From.ID, reminderTimeUTC, op.Label)
+	id, err := b.repo.AddReminder(msg.Chat.ID, msg.From.ID, reminderTimeUTC, op.Label, op.IsTodo)
 	if err != nil {
 		b.logger.Printf("Error adding reminder: %v", err)
 		reply := tgbotapi.NewMessage(msg.Chat.ID, "Ошибка при создании напоминания.")
@@ -97,14 +97,24 @@ func (b *ReminderBot) processCreateOperation(op llm.Operation, msg *tgbotapi.Mes
 		return
 	}
 
-	b.logger.Printf("Created reminder: ID=%d, '%s' at %s (chat %d, timezone %s)",
-		id, op.Label, reminderTimeUTC.Format("2006-01-02 15:04:05"), msg.Chat.ID, timezone)
+	itemType := "напоминание"
+	if op.IsTodo {
+		itemType = "задачу"
+	}
+
+	b.logger.Printf("Created %s: ID=%d, '%s' at %s (chat %d, timezone %s)",
+		itemType, id, op.Label, reminderTimeUTC.Format("2006-01-02 15:04:05"), msg.Chat.ID, timezone)
 
 	// Format answer with human-readable time in user's timezone
 	answer := op.Answer
 	if answer == "" {
-		answer = fmt.Sprintf("Создано напоминание: %s в %s",
-			op.Label, reminderTimeUser.Format("02.01.2006 15:04"))
+		if op.IsTodo {
+			answer = fmt.Sprintf("Создана задача: %s на %s",
+				op.Label, reminderTimeUser.Format("02.01.2006"))
+		} else {
+			answer = fmt.Sprintf("Создано напоминание: %s в %s",
+				op.Label, reminderTimeUser.Format("02.01.2006 15:04"))
+		}
 	}
 
 	// Create reply message with delete button
@@ -126,8 +136,8 @@ func (b *ReminderBot) processCreateOperation(op llm.Operation, msg *tgbotapi.Mes
 func (b *ReminderBot) processCreateRecurringOperation(op llm.Operation, msg *tgbotapi.Message) {
 	// Parse time (should be in format "15:04")
 	timeStr := op.Time
-	if timeStr == "" {
-		// If Time is empty, try to extract time from DateTime
+	if timeStr == "" && !op.IsTodo {
+		// If Time is empty and it's not a todo, try to extract time from DateTime
 		if op.Datetime != "" {
 			datetime, err := time.Parse("2006-01-02 15:04:05", op.Datetime)
 			if err == nil {
@@ -136,11 +146,16 @@ func (b *ReminderBot) processCreateRecurringOperation(op llm.Operation, msg *tgb
 		}
 	}
 
-	if timeStr == "" {
+	if timeStr == "" && !op.IsTodo {
 		b.logger.Printf("Missing time in create recurring operation")
 		reply := tgbotapi.NewMessage(msg.Chat.ID, "Не указано время для повторяющегося напоминания.")
 		b.bot.Send(reply)
 		return
+	}
+
+	// For todo items without time, set a default time
+	if op.IsTodo && timeStr == "" {
+		timeStr = "00:00"
 	}
 
 	var recurringType storage.RecurringType
@@ -195,7 +210,7 @@ func (b *ReminderBot) processCreateRecurringOperation(op llm.Operation, msg *tgb
 		return
 	}
 
-	b.addRecurringReminder(msg, op.Label, recurringType, timeStr, dayOfWeek, dayOfMonth)
+	b.addRecurringReminder(msg, op.Label, recurringType, timeStr, dayOfWeek, dayOfMonth, op.IsTodo)
 }
 
 // parseDayOfWeek parses day of week from Russian or English name

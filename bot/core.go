@@ -176,16 +176,46 @@ func (b *ReminderBot) handleCallbackQuery(query *tgbotapi.CallbackQuery) {
 	callback_resp := tgbotapi.NewCallback(query.ID, "")
 	b.bot.Request(callback_resp)
 
-	// Handle different callback types
-	if strings.HasPrefix(callback, "delete_") {
-		// Extract reminder ID from callback data
+	if strings.HasPrefix(callback, "delete_rec_") {
+		// Extract recurring reminder ID from callback data
+		reminderIDStr := strings.TrimPrefix(callback, "delete_rec_")
+		reminderID, err := strconv.ParseInt(reminderIDStr, 10, 64)
+		if err != nil {
+			b.logger.Printf("Error parsing recurring reminder ID from callback: %v", err)
+			return
+		}
+
+		// Delete recurring reminder
+		deleted, err := b.repo.DeleteRecurringReminder(reminderID, query.From.ID)
+		if err != nil {
+			b.logger.Printf("Error deleting recurring reminder: %v", err)
+			return
+		}
+
+		if !deleted {
+			notification := tgbotapi.NewMessage(query.Message.Chat.ID, "Регулярное напоминание не найдено или не принадлежит вам.")
+			b.bot.Send(notification)
+			return
+		}
+
+		// Delete the message where the button was clicked
+		deleteMsg := tgbotapi.NewDeleteMessage(query.Message.Chat.ID, query.Message.MessageID)
+		_, err = b.bot.Request(deleteMsg)
+		if err != nil {
+			b.logger.Printf("Error deleting message: %v", err)
+			// If we can't delete the message, at least send a confirmation
+			notification := tgbotapi.NewMessage(query.Message.Chat.ID, "✅ Регулярное напоминание удалено.")
+			b.bot.Send(notification)
+		}
+
+		b.logger.Printf("Deleted recurring reminder via inline button: ID=%d (user %d)",
+			reminderID, query.From.ID)
+	} else if strings.HasPrefix(callback, "delete_") {
+		// Extract regular reminder ID from callback data
 		reminderIDStr := strings.TrimPrefix(callback, "delete_")
 		reminderID, err := strconv.ParseInt(reminderIDStr, 10, 64)
 		if err != nil {
 			b.logger.Printf("Error parsing reminder ID from callback: %v", err)
-			// Send a notification to the user
-			notification := tgbotapi.NewMessage(query.Message.Chat.ID, "Ошибка при удалении напоминания.")
-			b.bot.Send(notification)
 			return
 		}
 
@@ -193,8 +223,6 @@ func (b *ReminderBot) handleCallbackQuery(query *tgbotapi.CallbackQuery) {
 		deleted, err := b.repo.DeleteReminder(reminderID, query.From.ID)
 		if err != nil {
 			b.logger.Printf("Error deleting reminder: %v", err)
-			notification := tgbotapi.NewMessage(query.Message.Chat.ID, "Ошибка при удалении напоминания.")
-			b.bot.Send(notification)
 			return
 		}
 
