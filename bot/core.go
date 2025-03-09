@@ -51,6 +51,13 @@ func NewReminderBot(cfg *config.Config, logger *log.Logger) (*ReminderBot, error
 func (b *ReminderBot) Start() error {
 	b.logger.Printf("Starting bot @%s", b.bot.Self.UserName)
 
+	// Register bot commands
+	err := b.registerBotCommands()
+	if err != nil {
+		b.logger.Printf("Warning: Failed to register bot commands: %v", err)
+		// Continue anyway since this is not critical
+	}
+
 	// Start reminder checker
 	go b.checkReminders()
 
@@ -72,6 +79,23 @@ func (b *ReminderBot) Start() error {
 	}
 
 	return nil
+}
+
+// registerBotCommands registers the available commands for the bot
+func (b *ReminderBot) registerBotCommands() error {
+	commands := []tgbotapi.BotCommand{
+		{Command: "start", Description: "Начать работу с ботом"},
+		{Command: "list", Description: "Показать все активные напоминания"},
+		{Command: "recurring", Description: "Показать регулярные напоминания"},
+		{Command: "today", Description: "Показать напоминания на сегодня"},
+		{Command: "tomorrow", Description: "Показать напоминания на завтра"},
+		{Command: "timezone", Description: "Установить часовой пояс"},
+		{Command: "help", Description: "Показать справку по использованию бота"},
+	}
+
+	cfg := tgbotapi.NewSetMyCommands(commands...)
+	_, err := b.bot.Request(cfg)
+	return err
 }
 
 // Stop stops the bot
