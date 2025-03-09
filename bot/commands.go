@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -170,32 +171,55 @@ func (b *ReminderBot) handleTimezoneCommand(msg *tgbotapi.Message) {
 
 		replyText := fmt.Sprintf(`Твой текущий часовой пояс: %s
 
-Чтобы изменить часовой пояс, используй команду:
-/timezone Europe/Moscow
+Чтобы изменить часовой пояс, просто укажи свой город:
+/timezone Москва
+/timezone Екатеринбург
+/timezone Владивосток
 
-Популярные часовые пояса России:
-- Europe/Moscow - Москва, Санкт-Петербург
-- Europe/Kaliningrad - Калининград
-- Europe/Samara - Самара
-- Asia/Yekaterinburg - Екатеринбург
-- Asia/Omsk - Омск
-- Asia/Krasnoyarsk - Красноярск
-- Asia/Irkutsk - Иркутск
-- Asia/Yakutsk - Якутск
-- Asia/Vladivostok - Владивосток
-- Asia/Magadan - Магадан
-- Asia/Kamchatka - Камчатка`, timezone)
+Или используй стандартный формат:
+/timezone Europe/Moscow
+/timezone Asia/Yekaterinburg`, timezone)
 
 		reply := tgbotapi.NewMessage(msg.Chat.ID, replyText)
 		b.bot.Send(reply)
 		return
 	}
 
-	// Try to set the timezone
+	// If the input doesn't look like a standard IANA timezone (with a slash),
+	// we'll let the natural language processing handle it
+	if !strings.Contains(args, "/") {
+		// Create context with timeout
+		ctx, cancel := context.WithTimeout(context.Background(), b.config.APITimeout)
+		defer cancel()
+
+		// Use the LLM to determine the timezone
+		llmOutput, err := b.llmClient.ParseMessage(ctx, llmPrompt, "установи часовой пояс "+args, nil)
+		if err != nil {
+			b.logger.Printf("Error parsing timezone with LLM: %v", err)
+			reply := tgbotapi.NewMessage(msg.Chat.ID, "Не удалось определить часовой пояс. Попробуйте указать в формате 'Europe/Moscow'.")
+			b.bot.Send(reply)
+			return
+		}
+
+		// Process the timezone operation
+		for _, op := range llmOutput.Operations {
+			if op.Action == "set_timezone" && op.Timezone != "" {
+				b.processSetTimezoneOperation(op, msg)
+				return
+			}
+		}
+
+		// If we got here, the LLM didn't return a timezone operation
+		reply := tgbotapi.NewMessage(msg.Chat.ID, "Не удалось определить часовой пояс для указанного города.")
+		b.bot.Send(reply)
+		return
+	}
+
+	// Try to set the timezone directly (for standard IANA format input)
 	err := b.repo.SetUserTimezone(msg.From.ID, args)
 	if err != nil {
 		b.logger.Printf("Error setting timezone: %v", err)
-		reply := tgbotapi.NewMessage(msg.Chat.ID, "Неверный часовой пояс. Пожалуйста, используй формат 'Continent/City', например 'Europe/Moscow'.")
+		reply := tgbotapi.NewMessage(msg.Chat.ID, "Неверный формат часового пояса. Пожалуйста, используйте формат 'Continent/City', например 'Europe/Moscow'.")
 		b.bot.Send(reply)
 		return
 	}
