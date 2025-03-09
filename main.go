@@ -1,18 +1,35 @@
 package main
 
 import (
+	"flag"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"reminders21/bot"
+	"reminders21/cli"
 	"reminders21/config"
 )
 
+var (
+	broadcastMode = flag.Bool("broadcast", false, "Run in broadcast mode")
+)
+
 func main() {
+	flag.Parse()
+
 	// Set up logger
 	logger := log.New(os.Stdout, "[RemindersBot] ", log.LstdFlags)
+
+	// Check if we're running in broadcast mode
+	if *broadcastMode {
+		logger.Println("Running in broadcast mode...")
+		cli.RunBroadcast()
+		return
+	}
+
+	// Normal bot operation
 	logger.Println("Starting RemindersBot...")
 
 	// Load config

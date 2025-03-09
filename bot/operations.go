@@ -107,7 +107,18 @@ func (b *ReminderBot) processCreateOperation(op llm.Operation, msg *tgbotapi.Mes
 			op.Label, reminderTimeUser.Format("02.01.2006 15:04"))
 	}
 
+	// Create reply message with delete button
 	reply := tgbotapi.NewMessage(msg.Chat.ID, answer)
+
+	// Add inline keyboard with delete button
+	deleteCallback := fmt.Sprintf("delete_%d", id)
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("❌ Удалить", deleteCallback),
+		),
+	)
+	reply.ReplyMarkup = keyboard
+
 	b.bot.Send(reply)
 }
 

@@ -398,3 +398,61 @@ func (r *ReminderRepository) SetUserTimezone(userID int64, timezone string) erro
 	)
 	return err
 }
+
+// GetReminderByID gets a specific reminder by ID
+func (r *ReminderRepository) GetReminderByID(id int64) (*ReminderItem, error) {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+
+	var reminder ReminderItem
+	var notified int
+
+	err := r.db.QueryRow(`
+        SELECT id, chat_id, user_id, reminder_time, label, notified 
+        FROM reminders 
+        WHERE id = ?`, id).Scan(
+		&reminder.ID, &reminder.ChatID, &reminder.UserID,
+		&reminder.ReminderTime, &reminder.Label, &notified)
+
+	if err != nil {
+		return nil, err
+	}
+
+	reminder.Notified = notified > 0
+	return &reminder, nil
+}
+
+// GetAllActiveChatIDs returns a list of unique chat IDs from all active users
+func (r *ReminderRepository) GetAllActiveChatIDs() ([]int64, error) {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+
+	// Get all unique chat IDs from all tables
+	query := `
+	SELECT DISTINCT chat_id FROM (
+		SELECT chat_id FROM reminders WHERE notified = 0
+		UNION
+		SELECT chat_id FROM recurring_reminders WHERE active = 1
+		UNION
+		SELECT user_id AS chat_id FROM user_preferences -- Assuming user_id can be used as chat_id for personal chats
+	) AS active_chats
+	`
+
+	rows, err := r.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var chatIDs []int64
+	for rows.Next() {
+		var chatID int64
+		if err := rows.Scan(&chatID); err != nil {
+			r.logger.Printf("Error scanning chat ID: %v", err)
+			continue
+		}
+		chatIDs = append(chatIDs, chatID)
+	}
+
+	return chatIDs, rows.Err()
+}
