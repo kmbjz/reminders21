@@ -177,14 +177,12 @@ func (b *ReminderBot) handleTimezoneCommand(msg *tgbotapi.Message) {
 
 		replyText := fmt.Sprintf(`Твой текущий часовой пояс: %s
 
-Чтобы изменить часовой пояс, просто укажи свой город:
+Чтобы изменить часовой пояс, просто укажи свой город, например:
 /timezone Москва
 /timezone Екатеринбург
-/timezone Владивосток
+/timezone [твой город]
 
-Или используй стандартный формат:
-/timezone Europe/Moscow
-/timezone Asia/Yekaterinburg`, timezone)
+Или просто отправь текстом или голосом команду: "Измени мой часовой пояс на Петербург"`, timezone)
 
 		reply := tgbotapi.NewMessage(msg.Chat.ID, replyText)
 		b.bot.Send(reply)
